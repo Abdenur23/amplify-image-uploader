@@ -3,7 +3,6 @@ import React, { useState } from "react";
 export default function App(){
   const [file, setFile] = useState(null);
   const [status, setStatus] = useState("");
-  // apiUrl is the base URL for the API Gateway (e.g., .../first_stage)
   const apiUrl = process.env.REACT_APP_API_URL; 
 
   const handleFile = (e) => setFile(e.target.files[0]);
@@ -14,7 +13,6 @@ export default function App(){
       return; 
     }
     
-    // Create a unique S3 object key
     const objectKey = `${Date.now()}_${file.name}`;
     
     try {
@@ -28,7 +26,7 @@ export default function App(){
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           fileName: objectKey,
-          contentType: file.type // Send the Content-Type to the Lambda
+          contentType: file.type // Send browser's Content-Type
         })
       });
 
@@ -37,7 +35,8 @@ export default function App(){
         throw new Error(`Failed to get presigned URL: ${errorText}`);
       }
       
-      const { uploadUrl } = await presignUrlRes.json();
+      // **NEW: Extract the uploadUrl AND the EXACT contentType returned by the Lambda**
+      const { uploadUrl, contentType: validatedContentType } = await presignUrlRes.json();
       
       // ----------------------------------------------------------------------
       // STEP 2: Upload File Directly to S3 (PUT to Presigned URL)
@@ -46,16 +45,18 @@ export default function App(){
       
       const uploadRes = await fetch(uploadUrl, {
         method: "PUT",
-        // CRITICAL: This header MUST exactly match the contentType used in the Lambda command!
-        headers: { "Content-Type": file.type }, 
-        body: file // Send the raw File object
+        // CRITICAL: Use the validated string returned from the Lambda, 
+        // ensuring a perfect match with the Presigned URL signature.
+        headers: { "Content-Type": validatedContentType }, 
+        body: file
       });
 
       if (uploadRes.ok) {
         setStatus(`Upload succeeded ✅. File: ${objectKey}`);
       } else {
-        // S3 will usually return a 400 or 403 on header mismatch
-        setStatus(`S3 Upload failed. Status: ${uploadRes.status}. Key: ${objectKey}`);
+        // Log a more detailed error for the 403
+        const errorDetail = await uploadRes.text();
+        setStatus(`S3 Upload failed. Status: ${uploadRes.status}. Details: ${errorDetail.substring(0, 100)}...`);
       }
 
     } catch (err) {
